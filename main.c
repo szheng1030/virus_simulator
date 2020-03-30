@@ -14,8 +14,13 @@ void clear_screen();
 void clear_boxes(int x, int y);
 void draw_banner();
 void draw_border();
-void draw_banner_data();
+void draw_banner_text();
 void update_banner_data(int healthy, int sick, int recovered);
+void init_banner_graph(int healthy, int sick, int recovered);
+void reduce_banner_graph(int* healthy, int* prev_healthy, int* sick,
+			int* prev_sick, int* recovered, int* prev_recovered);
+void extend_banner_graph(int healthy, int prev_healthy, int sick,
+			int prev_sick, int recovered, int prev_recovered);
 
 const int SCREEN_WIDTH = 320;
 const int SCREEN_HEIGHT = 240;
@@ -24,7 +29,7 @@ const int BORDER_OFFSET = 5;
 const int BOX_WIDTH = 5;
 const int NUM_BOXES = 35;
 const int INITIAL_SICK = 3;
-const double SICK_DURATION = 1000.0;
+const double SICK_DURATION = 100.0;
 
 const int SIMU_WIDHT = 308;
 const int SIMU_HEIGHT = 192;
@@ -57,6 +62,12 @@ int main(void) {
 	};
 
 	struct Box box[NUM_BOXES];
+	int healthy_count = 0;
+	int sick_count = 0;
+	int recovered_count = 0;
+	int prev_healthy_count = 0;
+	int prev_sick_count = 0;
+	int prev_recovered_count = 0;
 
 	/* Create intial conditions for each box (person) */
 	/* Define: Healthy = 0, Sick = 1, Recovered = 2 */
@@ -76,9 +87,24 @@ int main(void) {
 		box[i].dy = rand() % 2 * 2 - 1;
 		box[i].sick_timer = SICK_DURATION;
 		box[i].state = 0;
+
 		for (int j = 0; j < INITIAL_SICK; j++) {
 			if (i == init_sick[j])
 				box[i].state = 1;
+		}
+
+		// Count number of boxes in each health state
+		if (box[i].state == 0) {
+			healthy_count++;
+			prev_healthy_count++;
+		}
+		else if (box[i].state == 1) {
+			sick_count++;
+			prev_sick_count++;
+		}
+		else if (box[i].state == 2) {
+			recovered_count++;
+			prev_recovered_count++;
 		}
 	}
 
@@ -89,18 +115,20 @@ int main(void) {
 	draw_border();
 	wait_for_vsync();
 
-	draw_banner_data();
+	draw_banner_text();
+	init_banner_graph(healthy_count, sick_count, recovered_count);
 
     while (true) {
-
-		int healthy_count = 0;
-		int sick_count = 0;
-		int recovered_count = 0;
 
 		// Erase boxes at their previous location
 		for (int i = 0; i < NUM_BOXES; i++) {
 			clear_boxes(box[i].x, box[i].y);
 		}
+
+		// Erase part of graph if numbers decreased
+		reduce_banner_graph(&healthy_count, &prev_healthy_count, &sick_count,
+					&prev_sick_count, &recovered_count, &prev_recovered_count);
+
 
 		// Update positions and states
 		for (int i = 0; i < NUM_BOXES; i++) {
@@ -153,16 +181,12 @@ int main(void) {
 			// Increment sick timer
 			if (box[i].state == 1)
 				box[i].sick_timer--;
-			if (box[i].sick_timer == 0)
+			if (box[i].sick_timer == 0) {
+				box[i].sick_timer = -1;
 				box[i].state = 2;
-
-			// Count number of boxes in each health state
-			if (box[i].state == 0)
-				healthy_count++;
-			else if (box[i].state == 1)
-				sick_count++;
-			else if (box[i].state == 2)
+				sick_count--;
 				recovered_count++;
+			}
 		}
 
 		// Draw boxes
@@ -179,9 +203,14 @@ int main(void) {
 			}
 		}
 
+		// Update numbers to reflect virus spraed and recoveries
 		update_banner_data(healthy_count, sick_count, recovered_count);
 
-		/* Wait for pixels to be drawn and swap buffers */
+		// Extend graph on banner if numbers increased
+		extend_banner_graph(healthy_count, prev_healthy_count, sick_count,
+					prev_sick_count, recovered_count, prev_recovered_count);
+
+		// Wait for pixels to be drawn and swap buffers
 		wait_for_vsync();
         //pixel_buffer_start = *(pixel_ctrl_ptr + 1);
     }
@@ -200,6 +229,7 @@ void wait_for_vsync(){
 		status = *(pixel_ctrl_ptr + 3);
 	}
 }
+
 
 /* Bresenham’s algorithm */
 void draw_line(int x0, int y0, int x1, int y1, short color){
@@ -306,7 +336,7 @@ void draw_border() {
 
 
 /* Draw the static text displayed on the banner */
-void draw_banner_data() {
+void draw_banner_text() {
 	plot_char(3, 1, 67);		// C
 	plot_char(4, 1, 79);		// O
 	plot_char(5, 1, 85);		// U
@@ -338,6 +368,12 @@ void draw_banner_data() {
 	plot_char(10, 7, 101);		// e
 	plot_char(11, 7, 100);		// d
 	plot_char(12, 7, 58);		// :
+
+	plot_char(30, 1, 71);		// G
+	plot_char(31, 1, 82);		// R
+	plot_char(32, 1, 65);		// A
+	plot_char(33, 1, 80);		// P
+	plot_char(34, 1, 72);		// H
 }
 
 
@@ -346,9 +382,92 @@ void update_banner_data(int healthy, int sick, int recovered) {
 	plot_char(12, 3, healthy / 10 + 48);
 	plot_char(13, 3, healthy % 10 + 48);
 
+	plot_char(30, 3, healthy / 10 + 48);
+	plot_char(31, 3, healthy % 10 + 48);
+
 	plot_char(9, 5, sick / 10 + 48);
 	plot_char(10, 5, sick % 10 + 48);
 
+	plot_char(30, 5, sick / 10 + 48);
+	plot_char(31, 5, sick % 10 + 48);
+
 	plot_char(14, 7, recovered / 10 + 48);
 	plot_char(15, 7, recovered % 10 + 48);
+
+	plot_char(30, 7, recovered / 10 + 48);
+	plot_char(31, 7, recovered % 10 + 48);
+}
+
+
+/* Initializie graph on the banner */
+void init_banner_graph(int healthy, int sick, int recovered) {
+	for (int i = 135; i < 135 + healthy; i++) {
+		plot_pixel(i, 13, 0xFFFF);
+		plot_pixel(i, 14, 0xFFFF);
+	}
+
+	for (int i = 135; i < 135 + sick; i++) {
+		plot_pixel(i, 21, 0xF800);
+		plot_pixel(i, 22, 0xF800);
+	}
+
+	for (int i = 135; i < 135 + recovered; i++) {
+		plot_pixel(i, 29, 0x07E8);
+		plot_pixel(i, 30, 0x07E8);
+	}
+}
+
+
+/* Reduce graph on banner if numbers decreased */
+void reduce_banner_graph(int* healthy, int* prev_healthy, int* sick,
+			int* prev_sick, int* recovered, int* prev_recovered) {
+	if (*prev_healthy > *healthy) {
+		for (int i = 135 + *healthy; i < 135 + *prev_healthy; i++) {
+			plot_pixel(i, 13, 0x8C71);
+			plot_pixel(i, 14, 0x8C71);
+		}
+		*prev_healthy = *healthy;
+	}
+
+	if (*prev_sick > *sick) {
+		for (int i = 135 + *sick; i < 135 + *prev_sick; i++) {
+			plot_pixel(i, 21, 0x8C71);
+			plot_pixel(i, 22, 0x8C71);
+		}
+		*prev_sick = *sick;
+	}
+
+	if (*prev_recovered > *recovered) {
+		for (int i = 135 + *recovered; i < 135 + *prev_recovered; i++) {
+			plot_pixel(i, 29, 0x8C71);
+			plot_pixel(i, 30, 0x8C71);
+		}
+		*prev_recovered = *recovered;
+	}
+}
+
+
+/* Extend graph on banner if numbers increased */
+void extend_banner_graph(int healthy, int prev_healthy, int sick,
+			int prev_sick, int recovered, int prev_recovered) {
+	if (healthy > prev_healthy) {
+		for (int i = 135 + prev_healthy; i < 135 + healthy; i++) {
+			plot_pixel(i, 13, 0xFFFF);
+			plot_pixel(i, 14, 0xFFFF);
+		}
+	}
+
+	if (sick > prev_sick) {
+		for (int i = 135 + prev_sick; i < 135 + sick; i++) {
+			plot_pixel(i, 21, 0xF800);
+			plot_pixel(i, 22, 0xF800);
+		}
+	}
+
+	if (recovered > prev_recovered) {
+		for (int i = 135 + prev_recovered; i < 135 + recovered; i++) {
+			plot_pixel(i, 29, 0x07E8);
+			plot_pixel(i, 30, 0x07E8);
+		}
+	}
 }
