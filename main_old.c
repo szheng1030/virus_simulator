@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <time.h>
-#include <math.h>
 
 volatile int pixel_buffer_start; // global variable
 
@@ -27,7 +26,7 @@ const int SCREEN_WIDTH = 320;
 const int SCREEN_HEIGHT = 240;
 const int BANNER_HEIGHT = 36;
 const int BORDER_OFFSET = 5;
-const int BOX_WIDTH = 5;			// Must be ODD (to calculate centre of box)
+const int BOX_WIDTH = 5;
 const int NUM_BOXES = 35;
 const int INITIAL_SICK = 3;
 const double SICK_DURATION = 100.0;
@@ -56,11 +55,9 @@ int main(void) {
 	struct Box {
 		int x;						// Current xPos, 0-315
 		int y;						// Current yPos, 0-235
-		int x_mid;					
-		int y_mid;					// (x_mid, y_mid) is the centre of the box
 		int dx;						// Movement in xDir, -1 or 1
 		int dy;						// Movement in yDir, -1 or 1
-		int state; 					// Current state (Healthy, Sick, Recovered)
+		int state; 				// Current state (Healthy, Sick, Recovered)
 		int sick_timer;
 	};
 
@@ -71,7 +68,6 @@ int main(void) {
 	int prev_healthy_count = 0;
 	int prev_sick_count = 0;
 	int prev_recovered_count = 0;
-	int angle = 0;
 
 	/* Create intial conditions for each box (person) */
 	/* Define: Healthy = 0, Sick = 1, Recovered = 2 */
@@ -150,52 +146,9 @@ int main(void) {
 			//////////////////////
 			//   NOT WORKING   ///
 			//////////////////////
-			// Box to Box Collision
+			/*// Box to Box Collision
 			for (int j = 0; j < NUM_BOXES; j++) {
 				if (i != j) {
-					if( sqrt(pow((box[i].x + 2) - (box[j].x + 2), 2) + pow((box[i].y + 2) - (box[j].y + 2), 2)) <= 5){
-						
-						//angle = acos( (box[j+2].y - box[i+2].y) / (box[j+2].x - box[i+2].x) );
-						
-						// Quadrant 1
-						if(box[i].x <= box[j].x && box[i].y >= box[j].y){
-							box[i].dx = -1;
-							box[i].dy = 1;
-							box[j].dx = 1;
-							box[j].dy = -1;
-						}
-						// Quadrant 2
-						else if(box[i].x >= box[j].x && box[i].y >= box[j].y){
-							box[i].dx = 1;
-							box[i].dy = 1;
-							box[j].dx = -1;
-							box[j].dy = -1;
-						}
-						// Quadrant 3
-						else if(box[i].x >= box[j].x && box[i].y <= box[j].y){
-							box[i].dx = 1;
-							box[i].dy = -1;
-							box[j].dx = -1;
-							box[j].dy = 1;
-						}
-						// Quadrant 4
-						else if(box[i].x <= box[j].x && box[i].y <= box[j].y){
-							box[i].dx = -1;
-							box[i].dy = -1;
-							box[j].dx = 1;
-							box[j].dy = 1;
-						}
-						
-						// Check for virus spread
-						if ( (box[i].state == 0 && box[j].state == 1) ||
-							 (box[i].state == 1 && box[j].state == 0) ) {
-								 box[i].state = 1;
-								 box[j].state = 1;
-						}
-						
-					}
-					
-					/*
 					// Right-Left / Left-Right Collisions
 					if( (box[i].x + BOX_WIDTH == box[j].x && abs(box[i].y - box[j].y) == BOX_WIDTH) ||
 						(box[i].x - BOX_WIDTH == box[j].x && abs(box[i].y - box[j].y) == BOX_WIDTH) ) {
@@ -221,9 +174,9 @@ int main(void) {
 								 box[i].state = 1;
 								 box[j].state = 1;
 						}
-					}*/
+					}
 				}
-			}
+			}*/
 
 			// Increment sick timer
 			if (box[i].state == 1)
@@ -250,7 +203,7 @@ int main(void) {
 			}
 		}
 
-		// Update numbers to reflect virus spread and recoveries
+		// Update numbers to reflect virus spraed and recoveries
 		update_banner_data(healthy_count, sick_count, recovered_count);
 
 		// Extend graph on banner if numbers increased
@@ -487,7 +440,7 @@ void reduce_banner_graph(int* healthy, int* prev_healthy, int* sick,
 	if (*prev_recovered > *recovered) {
 		for (int i = 135 + *recovered; i < 135 + *prev_recovered; i++) {
 			plot_pixel(i, 29, 0x8C71);
-			plot_pixel(i, 30, 0x8C71);
+			plot_pixel(i, 30, 0x8C71);w
 		}
 		*prev_recovered = *recovered;
 	}
