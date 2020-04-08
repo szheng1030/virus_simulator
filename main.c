@@ -15,6 +15,8 @@ void clear_screen();
 void clear_boxes(int x, int y);
 void draw_banner();
 void draw_border();
+void draw_mobile_boundary(int y);
+void erase_mobile_boundary(int y);
 void draw_banner_text();
 void update_banner_data(int healthy, int sick, int recovered);
 void init_banner_graph(int healthy, int sick, int recovered);
@@ -22,15 +24,17 @@ void reduce_banner_graph(int* healthy, int* prev_healthy, int* sick,
 			int* prev_sick, int* recovered, int* prev_recovered);
 void extend_banner_graph(int healthy, int prev_healthy, int sick,
 			int prev_sick, int recovered, int prev_recovered);
+int get_seg7_code(int value);
 
 const int SCREEN_WIDTH = 320;
 const int SCREEN_HEIGHT = 240;
 const int BANNER_HEIGHT = 36;
 const int BORDER_OFFSET = 5;
 const int BOX_WIDTH = 5;			// Must be ODD (to calculate centre of box)
-const int NUM_BOXES = 35;
+const int NUM_BOXES = 50;
 const int INITIAL_SICK = 3;
 const double SICK_DURATION = 100.0;
+const int STATIC_COUNT = 10;
 
 const int SIMU_WIDHT = 308;
 const int SIMU_HEIGHT = 192;
@@ -48,9 +52,26 @@ int main(void) {
     pixel_buffer_start = *(pixel_ctrl_ptr + 1);
 	clear_screen();									// Clear other buffer */
 
+	//Set up A9 timer
+	volatile int * a9_timer_load = (int *)0xFFFEC600;
+	volatile int * a9_timer_settings = (int *)0xFFFEC608;
+	volatile int * a9_timer_read = (int *)0xFFFEC60C;
+	*(a9_timer_load) = 2000000;				// Load Value
+	*(a9_timer_settings) = 3;				// Auto on, generate output in F
+
+	//Set up seg7 display
+	volatile int * seg7_3to0 = (int *)0xFF200020;
+
 	//Set up pixel control buffer
 	volatile int * pixel_ctrl_ptr = (int *)0xFF203020;
 	pixel_buffer_start = *pixel_ctrl_ptr;
+
+	// wait for a key to be pushed //
+	volatile int* key_ptr = (int*)0xFF200050;
+	int key_value = *key_ptr;
+	while(!key_value){
+		key_value = *key_ptr;
+	}
 
 	/* Structure and data used to represent a person */
 	struct Box {
@@ -62,6 +83,15 @@ int main(void) {
 		int dy;						// Movement in yDir, -1 or 1
 		int state; 					// Current state (Healthy, Sick, Recovered)
 		int sick_timer;
+		bool boundary_collision_x;
+		bool boundary_collision_y;
+	};
+
+	struct Mobile_Boundary{
+		int y;
+		//int width;
+		//int length;
+		int dy;
 	};
 
 	struct Box box[NUM_BOXES];
@@ -73,6 +103,17 @@ int main(void) {
 	int prev_recovered_count = 0;
 	int angle = 0;
 
+	struct Mobile_Boundary mobile_boundary;
+	mobile_boundary.y = 0;
+	mobile_boundary.dy = 0;
+	volatile int* sw_ptr = (int*)0xFF200040;
+	int switches_value = *sw_ptr;
+
+	int second = 0;
+	int second_ten = 0;
+	int minute = 0;
+	int minute_ten = 0;
+
 	/* Create intial conditions for each box (person) */
 	/* Define: Healthy = 0, Sick = 1, Recovered = 2 */
 	srand(time(NULL));
@@ -83,12 +124,25 @@ int main(void) {
 		init_sick[i] = rand() % NUM_BOXES;
 	}
 
+	int static_box[STATIC_COUNT];
+	for (int i = 0; i < STATIC_COUNT; i++) {
+		static_box[i] = rand() % NUM_BOXES;
+	}
+
 	/* Initialzation of values */
 	for (int i = 0; i < NUM_BOXES; i++) {
 		box[i].x = (i % 20 + 1) * 15;
 		box[i].y = (i / 20 + 3) * 18;
+
 		box[i].dx = rand() % 2 * 2 - 1;
 		box[i].dy = rand() % 2 * 2 - 1;
+		for (int j = 0; j < STATIC_COUNT; j++) {
+			if (i == static_box[j]) {
+				box[i].dx = 0;
+				box[i].dy = 0;
+			}
+		}
+
 		box[i].sick_timer = SICK_DURATION;
 		box[i].state = 0;
 
@@ -122,7 +176,59 @@ int main(void) {
 	draw_banner_text();
 	init_banner_graph(healthy_count, sick_count, recovered_count);
 
-    while (true) {
+	switches_value = *sw_ptr;
+	// Update moving boundary
+	while(switches_value != 4){
+		erase_mobile_boundary(mobile_boundary.y);
+
+		switches_value = *sw_ptr;
+		//printf("%d\n", switches_value);
+
+		if(switches_value == 1)
+			mobile_boundary.dy = 1;
+		if(switches_value == 2)
+			mobile_boundary.dy = -1;
+		if(switches_value == 0 || switches_value > 2
+		   || (mobile_boundary.y >= SCREEN_HEIGHT/2 && mobile_boundary.dy == 1)
+		   || (mobile_boundary.y <= 0 && mobile_boundary.dy == -1))
+		   mobile_boundary.dy = 0;
+
+		mobile_boundary.y += mobile_boundary.dy;
+		//printf("%d\n", mobile_boundary.y);
+		draw_mobile_boundary(mobile_boundary.y);
+		wait_for_vsync();
+	}
+
+
+    while (sick_count > 0) {
+
+		if (*a9_timer_read != 0) {
+			second += 1;
+			if (second == 10) {
+				second_ten += 1;
+				second = 0;
+			}
+			if (second_ten == 10) {
+				minute += 1;
+				second_ten = 0;
+			}
+			if (minute == 10) {
+				minute_ten += 1;
+				minute = 0;
+			}
+			if (minute_ten == 10)
+				*a9_timer_settings = 0;
+			*a9_timer_read = 1;
+		}
+
+		*seg7_3to0 = get_seg7_code(minute_ten) * pow(2, 24) +
+					get_seg7_code(minute) * pow(2, 16) +
+					get_seg7_code(second_ten) * pow(2, 8) +
+					get_seg7_code(second);
+
+
+		//printf("%d%d : %d%d\n", minute_ten, minute, second_ten, second);
+
 
 		// Erase boxes at their previous location
 		for (int i = 0; i < NUM_BOXES; i++) {
@@ -137,48 +243,124 @@ int main(void) {
 			box[i].y += box[i].dy;
 
 			// Check if box has hit screen borders
-			if (box[i].x >= (SCREEN_WIDTH - 1) - BOX_WIDTH - BORDER_OFFSET || box[i].x <= BORDER_OFFSET + 1)
+			if (box[i].x >= (SCREEN_WIDTH - 1) - BOX_WIDTH - BORDER_OFFSET || box[i].x <= BORDER_OFFSET + 1){
 			 	box[i].dx = -box[i].dx;
-			if (box[i].y >= (SCREEN_HEIGHT - 1) - BOX_WIDTH - BORDER_OFFSET || box[i].y <= BANNER_HEIGHT + 1 + BORDER_OFFSET)
-				 box[i].dy = -box[i].dy;
+				box[i].boundary_collision_x = true;
+			}
+			else
+				box[i].boundary_collision_x = false;
 
-			//////////////////////
-			//   NOT WORKING   ///
-			//////////////////////
+			if (box[i].y >= (SCREEN_HEIGHT - 1) - BOX_WIDTH - BORDER_OFFSET - mobile_boundary.y || box[i].y <= BANNER_HEIGHT + 1 + BORDER_OFFSET){
+				box[i].dy = -box[i].dy;
+				box[i].boundary_collision_y = true;
+			}
+			else
+				box[i].boundary_collision_y = false;
+
+
 			// Box to Box Collision
 			for (int j = 0; j < NUM_BOXES; j++) {
 				if (i != j) {
 					if( sqrt(pow((box[i].x + 2) - (box[j].x + 2), 2) + pow((box[i].y + 2) - (box[j].y + 2), 2)) <= 5){
 
-						//angle = acos( (box[j+2].y - box[i+2].y) / (box[j+2].x - box[i+2].x) );
-
 						// Quadrant 1
 						if(box[i].x <= box[j].x && box[i].y >= box[j].y){
-							box[i].dx = -1;
-							box[i].dy = 1;
-							box[j].dx = 1;
-							box[j].dy = -1;
+							if(box[i].boundary_collision_x)
+								box[i].dx = 0;
+							else
+								box[i].dx = -1;
+							if(box[i].boundary_collision_y)
+								box[i].dy = 0;
+							else
+								box[i].dy = 1;
+							if(box[j].boundary_collision_x)
+								box[j].dx = 0;
+							else
+								box[j].dx = 1;
+							if(box[j].boundary_collision_y)
+								box[j].dy = 0;
+							else
+								box[j].dy = -1;
+
+							//box[i].dx = -1;
+							//box[i].dy = 1;
+							//box[j].dx = 1;
+							//box[j].dy = -1;
 						}
 						// Quadrant 2
 						else if(box[i].x >= box[j].x && box[i].y >= box[j].y){
-							box[i].dx = 1;
-							box[i].dy = 1;
-							box[j].dx = -1;
-							box[j].dy = -1;
+
+							if(box[i].boundary_collision_x)
+								box[i].dx = 0;
+							else
+								box[i].dx = 1;
+							if(box[i].boundary_collision_y)
+								box[i].dy = 0;
+							else
+								box[i].dy = 1;
+							if(box[j].boundary_collision_x)
+								box[j].dx = 0;
+							else
+								box[j].dx = -1;
+							if(box[j].boundary_collision_y)
+								box[j].dy = 0;
+							else
+								box[j].dy = -1;
+
+							//box[i].dx = 1;
+							//box[i].dy = 1;
+							//box[j].dx = -1;
+							//box[j].dy = -1;
 						}
 						// Quadrant 3
 						else if(box[i].x >= box[j].x && box[i].y <= box[j].y){
-							box[i].dx = 1;
-							box[i].dy = -1;
-							box[j].dx = -1;
-							box[j].dy = 1;
+
+							if(box[i].boundary_collision_x)
+								box[i].dx = 0;
+							else
+								box[i].dx = 1;
+							if(box[i].boundary_collision_y)
+								box[i].dy = 0;
+							else
+								box[i].dy = -1;
+							if(box[j].boundary_collision_x)
+								box[j].dx = 0;
+							else
+								box[j].dx = -1;
+							if(box[j].boundary_collision_y)
+								box[j].dy = 0;
+							else
+								box[j].dy = 1;
+
+							//box[i].dx = 1;
+							//box[i].dy = -1;
+							//box[j].dx = -1;
+							//box[j].dy = 1;
 						}
 						// Quadrant 4
 						else if(box[i].x <= box[j].x && box[i].y <= box[j].y){
-							box[i].dx = -1;
-							box[i].dy = -1;
-							box[j].dx = 1;
-							box[j].dy = 1;
+
+							if(box[i].boundary_collision_x)
+								box[i].dx = 0;
+							else
+								box[i].dx = -1;
+							if(box[i].boundary_collision_y)
+								box[i].dy = 0;
+							else
+								box[i].dy = -1;
+							if(box[j].boundary_collision_x)
+								box[j].dx = 0;
+							else
+								box[j].dx = 1;
+							if(box[j].boundary_collision_y)
+								box[j].dy = 0;
+							else
+								box[j].dy = 1;
+
+							//box[i].dx = -1;
+							//box[i].dy = -1;
+							//box[j].dx = 1;
+							//box[j].dy = 1;
 						}
 
 						// Check for virus spread
@@ -189,36 +371,7 @@ int main(void) {
 								 sick_count++;
 								 healthy_count--;
 						}
-
 					}
-
-					/*
-					// Right-Left / Left-Right Collisions
-					if( (box[i].x + BOX_WIDTH == box[j].x && abs(box[i].y - box[j].y) == BOX_WIDTH) ||
-						(box[i].x - BOX_WIDTH == box[j].x && abs(box[i].y - box[j].y) == BOX_WIDTH) ) {
-						box[i].dx = -box[i].dx;
-						box[j].dx = -box[j].dx;
-
-						// Check for virus spread
-						if ( (box[i].state == 0 && box[j].state == 1) ||
-							 (box[i].state == 1 && box[j].state == 0) ) {
-								 box[i].state = 1;
-								 box[j].state = 1;
-						}
-					}
-					// Top-Bottom / Bottom-Top Collisions
-					if( (box[i].y + BOX_WIDTH == box[j].y && abs(box[i].x - box[j].x) == BOX_WIDTH) ||
-						(box[i].y - BOX_WIDTH == box[j].y && abs(box[i].x - box[j].x) == BOX_WIDTH) ) {
-						box[i].dy = -box[i].dy;
-						box[j].dy = -box[j].dy;
-
-						// Check for virus spread
-						if ( (box[i].state = 0 && box[j].state == 1) ||
-							 (box[i].state == 1 && box[j].state == 0) ) {
-								 box[i].state = 1;
-								 box[j].state = 1;
-						}
-					}*/
 				}
 			}
 
@@ -268,6 +421,9 @@ int main(void) {
 		wait_for_vsync();
         //pixel_buffer_start = *(pixel_ctrl_ptr + 1);
     }
+
+	// wait for user to exit/stop program
+	while(true){}
 }
 
 
@@ -388,6 +544,18 @@ void draw_border() {
 	}
 }
 
+void draw_mobile_boundary(int y){
+	for(int i = BORDER_OFFSET+1; i < (SCREEN_WIDTH - 1) - BORDER_OFFSET; i++){
+		plot_pixel(i, (SCREEN_HEIGHT - 1) - BORDER_OFFSET - y, 0x0F3F);
+	}
+}
+
+void erase_mobile_boundary(int y){
+	for(int i = BORDER_OFFSET+1; i < (SCREEN_WIDTH - 1) - BORDER_OFFSET; i++){
+		plot_pixel(i, (SCREEN_HEIGHT - 1) - BORDER_OFFSET - y, 0x0000);
+	}
+}
+
 
 /* Draw the static text displayed on the banner */
 void draw_banner_text() {
@@ -484,7 +652,7 @@ void reduce_banner_graph(int* healthy, int* prev_healthy, int* sick,
 	}
 
 	if (*prev_sick > *sick) {
-		printf("sick bar should derease\n");
+		//printf("sick bar should derease\n");
 		for (int i = 135 + *sick; i < 135 + *prev_sick; i++) {
 			plot_pixel(i, 21, 0x8C71);
 			plot_pixel(i, 22, 0x8C71);
@@ -522,5 +690,32 @@ void extend_banner_graph(int healthy, int prev_healthy, int sick,
 			plot_pixel(i, 29, 0x07E8);
 			plot_pixel(i, 30, 0x07E8);
 		}
+	}
+}
+
+int get_seg7_code(int value) {
+	switch(value) {
+		case 0:
+			return 63;
+		case 1:
+			return 6;
+		case 2:
+			return 91;
+		case 3:
+			return 79;
+		case 4:
+			return 102;
+		case 5:
+			return 109;
+		case 6:
+			return 125;
+		case 7:
+			return 7;
+		case 8:
+			return 127;
+		case 9:
+			return 111;
+		default:
+			return 63;
 	}
 }
