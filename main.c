@@ -33,8 +33,8 @@ const int BORDER_OFFSET = 5;
 const int BOX_WIDTH = 5;			// Must be ODD (to calculate centre of box)
 const int NUM_BOXES = 50;
 const int INITIAL_SICK = 3;
-const double SICK_DURATION = 100.0;
-const int STATIC_COUNT = 10;
+double SICK_DURATION = 100.0;
+const int STATIONARY_COUNT = 5;
 
 const int SIMU_WIDHT = 308;
 const int SIMU_HEIGHT = 192;
@@ -42,7 +42,7 @@ const int SIMU_HEIGHT = 192;
 int main(void) {
 
 	// Double buffer currently not working, using single for now
-	/* Set up and pixel controller and buffer
+	/*// Set up and pixel controller and buffer
 	volatile int * pixel_ctrl_ptr = (int *)0xFF203020;
     *(pixel_ctrl_ptr + 1) = 0xC8000000; 			// Set up On-chip buffer
     wait_for_vsync();								// Swap front/back
@@ -50,7 +50,7 @@ int main(void) {
     clear_screen(); 								// Clear ptr buffer
     *(pixel_ctrl_ptr + 1) = 0xC8000000;				// Set up SDRAM buffer
     pixel_buffer_start = *(pixel_ctrl_ptr + 1);
-	clear_screen();									// Clear other buffer */
+	clear_screen();									// Clear other buffer*/
 
 	//Set up A9 timer
 	volatile int * a9_timer_load = (int *)0xFFFEC600;
@@ -66,12 +66,17 @@ int main(void) {
 	volatile int * pixel_ctrl_ptr = (int *)0xFF203020;
 	pixel_buffer_start = *pixel_ctrl_ptr;
 
-	// wait for a key to be pushed //
+	// wait for a KEY to be pushed //
 	volatile int* key_ptr = (int*)0xFF200050;
 	int key_value = *key_ptr;
 	while(!key_value){
 		key_value = *key_ptr;
 	}
+	// wait for the KEY to be released
+	while(key_value){
+		key_value = *key_ptr;
+	}
+
 
 	/* Structure and data used to represent a person */
 	struct Box {
@@ -85,29 +90,25 @@ int main(void) {
 		int sick_timer;
 		bool boundary_collision_x;
 		bool boundary_collision_y;
+		bool stationary;
 	};
 
 	struct Mobile_Boundary{
 		int y;
-		//int width;
-		//int length;
 		int dy;
 	};
 
 	struct Box box[NUM_BOXES];
 	int healthy_count = 0;
 	int sick_count = 0;
-	int recovered_count = 0;
+	int recovered_count = 00;
 	int prev_healthy_count = 0;
 	int prev_sick_count = 0;
 	int prev_recovered_count = 0;
-	int angle = 0;
 
 	struct Mobile_Boundary mobile_boundary;
 	mobile_boundary.y = 0;
 	mobile_boundary.dy = 0;
-	volatile int* sw_ptr = (int*)0xFF200040;
-	int switches_value = *sw_ptr;
 
 	int second = 0;
 	int second_ten = 0;
@@ -124,23 +125,99 @@ int main(void) {
 		init_sick[i] = rand() % NUM_BOXES;
 	}
 
-	int static_box[STATIC_COUNT];
+	/*int static_box[STATIC_COUNT];
 	for (int i = 0; i < STATIC_COUNT; i++) {
 		static_box[i] = rand() % NUM_BOXES;
+	}*/
+	// All boxes are intitially NOT stationary
+	for(int i = 0; i < NUM_BOXES; i++){
+		box[i].stationary = false;
+	}
+	int counter = STATIONARY_COUNT;
+	// Make STATIONARY_COUNT boxes stationary
+	for(int i = 0; i < counter; i++){
+		int index = i * (rand() % counter);
+
+		if(!box[index].stationary)
+			box[index].stationary = true;
+		else
+			counter++;
+
+		//box[i * (rand() % STATIONARY_COUNT)].stationary = true;
 	}
 
-	/* Initialzation of values */
-	for (int i = 0; i < NUM_BOXES; i++) {
-		box[i].x = (i % 20 + 1) * 15;
-		box[i].y = (i / 20 + 3) * 18;
+	clear_screen();
+	wait_for_vsync();
 
+	draw_banner();
+	draw_border();
+	wait_for_vsync();
+
+	draw_banner_text();
+
+	// SET SICK_DURATION //
+	volatile int* sw_ptr = (int*)0xFF200040;
+	int switches_value = *sw_ptr;
+	while(!key_value){
+		if(switches_value == 512)
+			SICK_DURATION = 50.0;
+		else if(switches_value == 256)
+			SICK_DURATION = 100.0;
+		else if(switches_value == 128)
+			SICK_DURATION = 150.0;
+		else if(switches_value == 64)
+			SICK_DURATION = 200.0;
+
+		switches_value = *sw_ptr;
+		key_value = *key_ptr;
+	}
+	// wait for the KEY to be released
+	while(key_value){
+		key_value = *key_ptr;
+	}
+
+
+	//// SET MOVING BOUNDARY ////
+	switches_value = *sw_ptr;
+	while(switches_value != 4){
+		erase_mobile_boundary(mobile_boundary.y);
+
+		switches_value = *sw_ptr;
+		//printf("%d\n", switches_value);
+
+		if(switches_value == 1)
+			mobile_boundary.dy = 1;
+		if(switches_value == 2)
+			mobile_boundary.dy = -1;
+		if(switches_value == 0 || switches_value > 2
+		   || (mobile_boundary.y >= SCREEN_HEIGHT/2 && mobile_boundary.dy == 1)
+		   || (mobile_boundary.y <= 0 && mobile_boundary.dy == -1))
+		   mobile_boundary.dy = 0;
+
+		mobile_boundary.y += mobile_boundary.dy;
+		//printf("%d\n", mobile_boundary.y);
+		draw_mobile_boundary(mobile_boundary.y);
+		wait_for_vsync();
+	}
+
+
+	/* Initialzation of values */
+	int border_difference = ((SCREEN_HEIGHT - 1) - BORDER_OFFSET - mobile_boundary.y) - (BANNER_HEIGHT + BORDER_OFFSET);
+	for (int i = 0; i < NUM_BOXES; i++) {
+		box[i].x = (i % 10 + 1) * 30;
+		box[i].y = 48 + (i / 10) * (border_difference) / 5;		// mobile_boundary.y
 		box[i].dx = rand() % 2 * 2 - 1;
 		box[i].dy = rand() % 2 * 2 - 1;
+		/*
 		for (int j = 0; j < STATIC_COUNT; j++) {
 			if (i == static_box[j]) {
 				box[i].dx = 0;
 				box[i].dy = 0;
 			}
+		}*/
+		if(box[i].stationary){
+			box[i].dx = 0;
+			box[i].dy = 0;
 		}
 
 		box[i].sick_timer = SICK_DURATION;
@@ -166,42 +243,13 @@ int main(void) {
 		}
 	}
 
-	clear_screen();
-	wait_for_vsync();
-
-	draw_banner();
-	draw_border();
-	wait_for_vsync();
-
-	draw_banner_text();
 	init_banner_graph(healthy_count, sick_count, recovered_count);
 
-	switches_value = *sw_ptr;
-	// Update moving boundary
-	while(switches_value != 4){
-		erase_mobile_boundary(mobile_boundary.y);
 
-		switches_value = *sw_ptr;
-		//printf("%d\n", switches_value);
-
-		if(switches_value == 1)
-			mobile_boundary.dy = 1;
-		if(switches_value == 2)
-			mobile_boundary.dy = -1;
-		if(switches_value == 0 || switches_value > 2
-		   || (mobile_boundary.y >= SCREEN_HEIGHT/2 && mobile_boundary.dy == 1)
-		   || (mobile_boundary.y <= 0 && mobile_boundary.dy == -1))
-		   mobile_boundary.dy = 0;
-
-		mobile_boundary.y += mobile_boundary.dy;
-		//printf("%d\n", mobile_boundary.y);
-		draw_mobile_boundary(mobile_boundary.y);
-		wait_for_vsync();
-	}
-
-
+	//// MAIN LOOP ////
     while (sick_count > 0) {
 
+		// timer
 		if (*a9_timer_read != 0) {
 			second += 1;
 			if (second == 10) {
@@ -226,8 +274,6 @@ int main(void) {
 					get_seg7_code(second_ten) * pow(2, 8) +
 					get_seg7_code(second);
 
-
-		//printf("%d%d : %d%d\n", minute_ten, minute, second_ten, second);
 
 
 		// Erase boxes at their previous location
@@ -265,22 +311,26 @@ int main(void) {
 
 						// Quadrant 1
 						if(box[i].x <= box[j].x && box[i].y >= box[j].y){
-							if(box[i].boundary_collision_x)
-								box[i].dx = 0;
-							else
-								box[i].dx = -1;
-							if(box[i].boundary_collision_y)
-								box[i].dy = 0;
-							else
-								box[i].dy = 1;
-							if(box[j].boundary_collision_x)
-								box[j].dx = 0;
-							else
-								box[j].dx = 1;
-							if(box[j].boundary_collision_y)
-								box[j].dy = 0;
-							else
-								box[j].dy = -1;
+							if(!box[i].stationary){
+								if(box[i].boundary_collision_x)
+									box[i].dx = 0;
+								else
+									box[i].dx = -1;
+								if(box[i].boundary_collision_y)
+									box[i].dy = 0;
+								else
+									box[i].dy = 1;
+							}
+							if(!box[j].stationary){
+								if(box[j].boundary_collision_x)
+									box[j].dx = 0;
+								else
+									box[j].dx = 1;
+								if(box[j].boundary_collision_y)
+									box[j].dy = 0;
+								else
+									box[j].dy = -1;
+							}
 
 							//box[i].dx = -1;
 							//box[i].dy = 1;
@@ -289,23 +339,26 @@ int main(void) {
 						}
 						// Quadrant 2
 						else if(box[i].x >= box[j].x && box[i].y >= box[j].y){
-
-							if(box[i].boundary_collision_x)
-								box[i].dx = 0;
-							else
-								box[i].dx = 1;
-							if(box[i].boundary_collision_y)
-								box[i].dy = 0;
-							else
-								box[i].dy = 1;
-							if(box[j].boundary_collision_x)
-								box[j].dx = 0;
-							else
-								box[j].dx = -1;
-							if(box[j].boundary_collision_y)
-								box[j].dy = 0;
-							else
-								box[j].dy = -1;
+							if(!box[i].stationary){
+								if(box[i].boundary_collision_x)
+									box[i].dx = 0;
+								else
+									box[i].dx = 1;
+								if(box[i].boundary_collision_y)
+									box[i].dy = 0;
+								else
+									box[i].dy = 1;
+							}
+							if(!box[j].stationary){
+								if(box[j].boundary_collision_x)
+									box[j].dx = 0;
+								else
+									box[j].dx = -1;
+								if(box[j].boundary_collision_y)
+									box[j].dy = 0;
+								else
+									box[j].dy = -1;
+							}
 
 							//box[i].dx = 1;
 							//box[i].dy = 1;
@@ -314,23 +367,26 @@ int main(void) {
 						}
 						// Quadrant 3
 						else if(box[i].x >= box[j].x && box[i].y <= box[j].y){
-
-							if(box[i].boundary_collision_x)
-								box[i].dx = 0;
-							else
-								box[i].dx = 1;
-							if(box[i].boundary_collision_y)
-								box[i].dy = 0;
-							else
-								box[i].dy = -1;
-							if(box[j].boundary_collision_x)
-								box[j].dx = 0;
-							else
-								box[j].dx = -1;
-							if(box[j].boundary_collision_y)
-								box[j].dy = 0;
-							else
-								box[j].dy = 1;
+							if(!box[i].stationary){
+								if(box[i].boundary_collision_x)
+									box[i].dx = 0;
+								else
+									box[i].dx = 1;
+								if(box[i].boundary_collision_y)
+									box[i].dy = 0;
+								else
+									box[i].dy = -1;
+							}
+							if(!box[j].stationary){
+								if(box[j].boundary_collision_x)
+									box[j].dx = 0;
+								else
+									box[j].dx = -1;
+								if(box[j].boundary_collision_y)
+									box[j].dy = 0;
+								else
+									box[j].dy = 1;
+							}
 
 							//box[i].dx = 1;
 							//box[i].dy = -1;
@@ -339,23 +395,26 @@ int main(void) {
 						}
 						// Quadrant 4
 						else if(box[i].x <= box[j].x && box[i].y <= box[j].y){
-
-							if(box[i].boundary_collision_x)
-								box[i].dx = 0;
-							else
-								box[i].dx = -1;
-							if(box[i].boundary_collision_y)
-								box[i].dy = 0;
-							else
-								box[i].dy = -1;
-							if(box[j].boundary_collision_x)
-								box[j].dx = 0;
-							else
-								box[j].dx = 1;
-							if(box[j].boundary_collision_y)
-								box[j].dy = 0;
-							else
-								box[j].dy = 1;
+							if(!box[i].stationary){
+								if(box[i].boundary_collision_x)
+									box[i].dx = 0;
+								else
+									box[i].dx = -1;
+								if(box[i].boundary_collision_y)
+									box[i].dy = 0;
+								else
+									box[i].dy = -1;
+							}
+							if(!box[j].stationary){
+								if(box[j].boundary_collision_x)
+									box[j].dx = 0;
+								else
+									box[j].dx = 1;
+								if(box[j].boundary_collision_y)
+									box[j].dy = 0;
+								else
+									box[j].dy = 1;
+							}
 
 							//box[i].dx = -1;
 							//box[i].dy = -1;
